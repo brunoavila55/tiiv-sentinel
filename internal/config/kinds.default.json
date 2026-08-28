@@ -1,0 +1,79 @@
+{
+  "kinds": [
+    {
+      "id": "pop",
+      "label": "POP",
+      "icon": "pop",
+      "color": "#7c5cff",
+      "actions": [
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" }
+      ]
+    },
+    {
+      "id": "router",
+      "label": "Roteador",
+      "icon": "router",
+      "color": "#2f9bff",
+      "actions": [
+        { "id": "ssh", "label": "SSH", "template": "ssh://{ip}" },
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" },
+        { "id": "https", "label": "HTTPS", "template": "https://{ip}" },
+        { "id": "winbox", "label": "Winbox", "template": "winbox://{ip}", "when_attr": { "key": "vendor", "value": "mikrotik" } }
+      ]
+    },
+    {
+      "id": "switch",
+      "label": "Switch",
+      "icon": "switch",
+      "color": "#22c3a6",
+      "actions": [
+        { "id": "ssh", "label": "SSH", "template": "ssh://{ip}" },
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" },
+        { "id": "https", "label": "HTTPS", "template": "https://{ip}" },
+        { "id": "winbox", "label": "Winbox", "template": "winbox://{ip}", "when_attr": { "key": "vendor", "value": "mikrotik" } }
+      ]
+    },
+    {
+      "id": "olt",
+      "label": "OLT",
+      "icon": "olt",
+      "color": "#f2a33c",
+      "actions": [
+        { "id": "ssh", "label": "SSH", "template": "ssh://{ip}" },
+        { "id": "telnet", "label": "Telnet", "template": "telnet://{ip}" },
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" }
+      ]
+    },
+    {
+      "id": "ap",
+      "label": "AP",
+      "icon": "ap",
+      "color": "#4ecb71",
+      "actions": [
+        { "id": "ssh", "label": "SSH", "template": "ssh://{ip}" },
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" },
+        { "id": "https", "label": "HTTPS", "template": "https://{ip}" },
+        { "id": "winbox", "label": "Winbox", "template": "winbox://{ip}", "when_attr": { "key": "vendor", "value": "mikrotik" } }
+      ]
+    },
+    {
+      "id": "link",
+      "label": "Link",
+      "icon": "link",
+      "color": "#9aa4b2",
+      "actions": [
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" }
+      ]
+    },
+    {
+      "id": "cliente",
+      "label": "Cliente",
+      "icon": "client",
+      "color": "#e05c7a",
+      "actions": [
+        { "id": "http", "label": "HTTP", "template": "http://{ip}" },
+        { "id": "https", "label": "HTTPS", "template": "https://{ip}" }
+      ]
+    }
+  ]
+}

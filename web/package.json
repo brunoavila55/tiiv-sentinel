@@ -1,0 +1,36 @@
+{
+  "name": "tiiv-sentinel-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:mobile": "vite --config vite.mobile.config.ts",
+    "build": "tsc --noEmit && vite build && vite build --config vite.mobile.config.ts",
+    "build:mobile": "vite build --config vite.mobile.config.ts",
+    "icons": "node scripts/gen-icons.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.7",
+    "dagre": "^0.8.5",
+    "idb": "^8.0.0",
+    "react": "^18.3.1",
+    "react-arborist": "^3.4.0",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^6.28.0",
+    "reactflow": "^11.11.4"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.52",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vite-plugin-pwa": "^0.21.1"
+  }
+}

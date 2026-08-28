@@ -1,0 +1,4 @@
+# node_modules do host tem binario compilado para o SO do host; deixar entrar no
+# contexto sobrescreveria o npm install feito dentro da imagem.
+node_modules
+dist
