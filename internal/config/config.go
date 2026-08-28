@@ -21,23 +21,24 @@ type MinIO struct {
 }
 
 type Config struct {
-	Env             string
-	HTTPAddr        string
-	DatabaseURL     string
-	MinIO           MinIO
-	SessionTTL      time.Duration
-	CookieSecure    bool
-	CookieName      string
-	AdminEmail      string
-	AdminPassword   string
-	CORSOrigins     []string
-	KindsFile       string
-	MaxUploadBytes  int64
-	PollEnabled     bool
-	PollInterval    time.Duration
-	PollConcurrency int
-	PollTimeout     time.Duration
-	PollPrivileged  bool
+	Env               string
+	HTTPAddr          string
+	DatabaseURL       string
+	MinIO             MinIO
+	SessionTTL        time.Duration
+	CookieSecure      bool
+	CookieName        string
+	AdminEmail        string
+	AdminPassword     string
+	CORSOrigins       []string
+	KindsFile         string
+	KindTemplatesFile string
+	MaxUploadBytes    int64
+	PollEnabled       bool
+	PollInterval      time.Duration
+	PollConcurrency   int
+	PollTimeout       time.Duration
+	PollPrivileged    bool
 }
 
 func Load() (*Config, error) {
@@ -54,19 +55,20 @@ func Load() (*Config, error) {
 			Region:           env("MINIO_REGION", "us-east-1"),
 			PresignTTL:       envDuration("MINIO_PRESIGN_TTL", 15*time.Minute),
 		},
-		SessionTTL:      envDuration("SESSION_TTL", 30*24*time.Hour),
-		CookieSecure:    envBool("COOKIE_SECURE", false),
-		CookieName:      env("COOKIE_NAME", "sentinel_session"),
-		AdminEmail:      env("ADMIN_EMAIL", ""),
-		AdminPassword:   env("ADMIN_PASSWORD", ""),
-		CORSOrigins:     envList("CORS_ORIGINS"),
-		KindsFile:       env("KINDS_FILE", ""),
-		MaxUploadBytes:  int64(envInt("MAX_UPLOAD_BYTES", 50*1024*1024)),
-		PollEnabled:     envBool("POLL_ENABLED", true),
-		PollInterval:    envDuration("POLL_INTERVAL", 60*time.Second),
-		PollConcurrency: envInt("POLL_CONCURRENCY", 50),
-		PollTimeout:     envDuration("POLL_TIMEOUT", 3*time.Second),
-		PollPrivileged:  envBool("PING_PRIVILEGED", true),
+		SessionTTL:        envDuration("SESSION_TTL", 30*24*time.Hour),
+		CookieSecure:      envBool("COOKIE_SECURE", false),
+		CookieName:        env("COOKIE_NAME", "sentinel_session"),
+		AdminEmail:        env("ADMIN_EMAIL", ""),
+		AdminPassword:     env("ADMIN_PASSWORD", ""),
+		CORSOrigins:       envList("CORS_ORIGINS"),
+		KindsFile:         env("KINDS_FILE", ""),
+		KindTemplatesFile: env("KIND_TEMPLATES_FILE", ""),
+		MaxUploadBytes:    int64(envInt("MAX_UPLOAD_BYTES", 50*1024*1024)),
+		PollEnabled:       envBool("POLL_ENABLED", true),
+		PollInterval:      envDuration("POLL_INTERVAL", 60*time.Second),
+		PollConcurrency:   envInt("POLL_CONCURRENCY", 50),
+		PollTimeout:       envDuration("POLL_TIMEOUT", 3*time.Second),
+		PollPrivileged:    envBool("PING_PRIVILEGED", true),
 	}
 
 	if c.DatabaseURL == "" {

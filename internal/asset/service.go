@@ -56,11 +56,16 @@ func (s *Service) Detail(ctx context.Context, id uuid.UUID) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
+	descendants, err := s.DescendantCount(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	return &Detail{
-		Asset:       *a,
-		Breadcrumb:  emptyIfNil(breadcrumb),
-		Children:    emptyIfNil(children),
-		Attachments: attachments,
+		Asset:           *a,
+		Breadcrumb:      emptyIfNil(breadcrumb),
+		Children:        emptyIfNil(children),
+		Attachments:     attachments,
+		DescendantCount: descendants,
 	}, nil
 }
 
@@ -97,7 +102,18 @@ func (s *Service) Search(ctx context.Context, term string, limit int) ([]Asset, 
 	return emptyIfNil(list), nil
 }
 
-func (s *Service) Create(ctx context.Context, in CreateInput) (*Asset, error) {
+// actorOf devolve o primeiro Actor da lista variadica, ou um Actor de sistema
+// quando a chamada nao informa quem agiu (testes, poller, seed). Variadico em
+// vez de parametro obrigatorio para nao quebrar toda chamada existente por
+// causa da auditoria.
+func actorOf(actors []Actor) Actor {
+	if len(actors) > 0 {
+		return actors[0]
+	}
+	return Actor{Email: "system"}
+}
+
+func (s *Service) Create(ctx context.Context, in CreateInput, actor ...Actor) (*Asset, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if err := s.validateName(in.Name); err != nil {
 		return nil, err
@@ -127,12 +143,19 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Asset, error) {
 		return nil, err
 	}
 	s.hub.Publish(events.Event{Type: events.TypeAssetCreated, Data: created})
+	s.audit(ctx, created.ID, created.Name, actorOf(actor), AuditCreate, map[string]any{
+		"kind": created.Kind, "parent_id": created.ParentID,
+	})
 	return created, nil
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*Asset, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput, actor ...Actor) (*Asset, error) {
 	if in.Empty() {
 		return s.store.Get(ctx, id)
+	}
+	before, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	if in.Has("name") {
 		if in.Name == nil {
@@ -159,6 +182,23 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*As
 		}
 		in.MgmtIP = ip
 	}
+	if in.Has("status") {
+		if in.Status == nil || (*in.Status != StatusUp && *in.Status != StatusDown && *in.Status != StatusUnknown) {
+			return nil, apperr.Validation("invalid_status", "status deve ser up, down ou unknown")
+		}
+	}
+	if in.Has("cover_attachment_id") && in.CoverAttachmentID != nil {
+		att, err := s.store.GetAttachment(ctx, *in.CoverAttachmentID)
+		if err != nil {
+			return nil, err
+		}
+		if att.AssetID != id {
+			return nil, apperr.Validation("invalid_cover", "anexo nao pertence a este ativo")
+		}
+		if att.Kind != AttachmentPhoto {
+			return nil, apperr.Validation("invalid_cover", "capa precisa ser uma foto")
+		}
+	}
 	if err := s.store.Update(ctx, id, in); err != nil {
 		return nil, err
 	}
@@ -167,13 +207,15 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*As
 		return nil, err
 	}
 	s.hub.Publish(events.Event{Type: events.TypeAssetUpdated, Data: updated})
+	s.audit(ctx, updated.ID, updated.Name, actorOf(actor), AuditUpdate, diffAsset(before, updated))
 	return updated, nil
 }
 
 // Move troca o pai validando ciclo: o destino nao pode estar dentro do proprio
 // subtree do ativo movido.
-func (s *Service) Move(ctx context.Context, id uuid.UUID, parentID *uuid.UUID) (*Asset, error) {
-	if _, err := s.store.Get(ctx, id); err != nil {
+func (s *Service) Move(ctx context.Context, id uuid.UUID, parentID *uuid.UUID, actor ...Actor) (*Asset, error) {
+	before, err := s.store.Get(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	if parentID != nil {
@@ -202,13 +244,30 @@ func (s *Service) Move(ctx context.Context, id uuid.UUID, parentID *uuid.UUID) (
 		return nil, err
 	}
 	s.hub.Publish(events.Event{Type: events.TypeAssetUpdated, Data: moved})
+	s.audit(ctx, moved.ID, moved.Name, actorOf(actor), AuditMove, map[string]any{
+		"parent_id": map[string]any{"from": before.ParentID, "to": moved.ParentID},
+	})
 	return moved, nil
+}
+
+// DescendantCount conta o subtree inteiro (nao so filhos diretos) — usado
+// pela UI para avisar quantos ativos um move ou um exclude-com-reparent afeta.
+func (s *Service) DescendantCount(ctx context.Context, id uuid.UUID) (int, error) {
+	list, err := s.store.Subtree(ctx, &id, nil)
+	if err != nil {
+		return 0, err
+	}
+	if len(list) == 0 {
+		return 0, nil
+	}
+	return len(list) - 1, nil
 }
 
 // Delete recusa ativo com filhos (409) e limpa os objetos do MinIO para nao
 // deixar orfao.
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	if _, err := s.store.Get(ctx, id); err != nil {
+func (s *Service) Delete(ctx context.Context, id uuid.UUID, actor ...Actor) error {
+	a, err := s.store.Get(ctx, id)
+	if err != nil {
 		return err
 	}
 	n, err := s.store.CountChildren(ctx, id)
@@ -235,7 +294,73 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		logWarn("falha limpando prefixo do ativo", err)
 	}
 	s.hub.Publish(events.Event{Type: events.TypeAssetDeleted, Data: map[string]any{"id": id}})
+	s.audit(ctx, a.ID, a.Name, actorOf(actor), AuditDelete, map[string]any{"kind": a.Kind, "parent_id": a.ParentID})
 	return nil
+}
+
+// DeleteWithReparent move os filhos diretos para o avo (o pai do ativo
+// apagado) e so entao apaga — a alternativa a exclusao em cascata, que nunca
+// existe neste sistema. Cada reparent passa pela validacao de ciclo normal do
+// Move.
+func (s *Service) DeleteWithReparent(ctx context.Context, id uuid.UUID, actor ...Actor) error {
+	a, err := s.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	children, err := s.store.Children(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, c := range children {
+		if _, err := s.Move(ctx, c.ID, a.ParentID, actor...); err != nil {
+			return err
+		}
+	}
+	return s.Delete(ctx, id, actor...)
+}
+
+// audit e melhor-esforco: uma falha em gravar auditoria nao pode derrubar a
+// escrita que ela documenta.
+func (s *Service) audit(ctx context.Context, assetID uuid.UUID, assetName string, actor Actor, action string, changes map[string]any) {
+	if err := s.store.InsertAudit(ctx, AuditEntry{
+		AssetID: assetID, AssetName: assetName, UserID: actor.UserID, UserEmail: actor.Email,
+		Action: action, Changes: changes,
+	}); err != nil {
+		logWarn("falha gravando auditoria", err)
+	}
+}
+
+func (s *Service) Audit(ctx context.Context, assetID uuid.UUID, limit int) ([]AuditEntry, error) {
+	return s.store.ListAudit(ctx, assetID, limit)
+}
+
+// diffAsset monta o changes jsonb do audit de update: so os campos que
+// realmente aparecem diferentes depois do patch.
+func diffAsset(before, after *Asset) map[string]any {
+	changes := map[string]any{}
+	if before.Name != after.Name {
+		changes["name"] = map[string]any{"from": before.Name, "to": after.Name}
+	}
+	if before.Kind != after.Kind {
+		changes["kind"] = map[string]any{"from": before.Kind, "to": after.Kind}
+	}
+	if strPtr(before.Description) != strPtr(after.Description) {
+		changes["description"] = map[string]any{"from": before.Description, "to": after.Description}
+	}
+	if strPtr(before.MgmtIP) != strPtr(after.MgmtIP) {
+		changes["mgmt_ip"] = map[string]any{"from": before.MgmtIP, "to": after.MgmtIP}
+	}
+	if before.Status != after.Status {
+		changes["status"] = map[string]any{"from": before.Status, "to": after.Status}
+	}
+	return changes
+}
+
+func strPtr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func (s *Service) SetPositions(ctx context.Context, positions []Position) (int, error) {

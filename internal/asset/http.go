@@ -35,6 +35,12 @@ func (h *Handler) Routes(r chi.Router) {
 		r.With(h.auth.RequireAdmin).Delete("/{id}", h.delete)
 		r.With(h.auth.RequireAdmin).Patch("/{id}/parent", h.move)
 		r.With(h.auth.RequireAdmin).Post("/positions", h.positions)
+		r.With(h.auth.RequireAdmin).Post("/bulk", h.bulk)
+		r.With(h.auth.RequireAdmin).Post("/{id}/duplicate-subtree", h.duplicateSubtree)
+		r.With(h.auth.RequireAdmin).Post("/{id}/attachments/reorder", h.reorderAttachments)
+		r.With(h.auth.RequireAdmin).Post("/import/preview", h.importPreview)
+		r.With(h.auth.RequireAdmin).Post("/import/commit", h.importCommit)
+		r.Get("/{id}/audit", h.audit)
 
 		r.Post("/{id}/attachments/presign", h.presign)
 		r.Post("/{id}/attachments", h.confirm)
@@ -55,8 +61,19 @@ func (h *Handler) Routes(r chi.Router) {
 
 	r.Route("/attachments", func(r chi.Router) {
 		r.Get("/{id}/url", h.attachmentURL)
+		r.With(h.auth.RequireAdmin).Patch("/{id}", h.renameAttachment)
 		r.With(h.auth.RequireAdmin).Delete("/{id}", h.deleteAttachment)
 	})
+}
+
+// actorFrom monta o Actor de auditoria a partir da sessao autenticada.
+func actorFrom(r *http.Request) Actor {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		return Actor{Email: "desconhecido"}
+	}
+	id := u.ID
+	return Actor{UserID: &id, Email: u.Email}
 }
 
 func pathUUID(r *http.Request, key string) (uuid.UUID, error) {
@@ -231,7 +248,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	created, err := h.svc.Create(r.Context(), in)
+	created, err := h.svc.Create(r.Context(), in, actorFrom(r))
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
@@ -250,7 +267,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	updated, err := h.svc.Update(r.Context(), id, in)
+	updated, err := h.svc.Update(r.Context(), id, in, actorFrom(r))
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
@@ -269,7 +286,7 @@ func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	moved, err := h.svc.Move(r.Context(), id, in.ParentID)
+	moved, err := h.svc.Move(r.Context(), id, in.ParentID, actorFrom(r))
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
@@ -283,11 +300,133 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	// reparent_children=1 e o unico jeito de apagar um ativo com filhos: eles
+	// sobem para o avo antes da exclusao. Sem o parametro, comportamento
+	// identico a antes (409 quando ha filhos) — nenhum consumidor existente
+	// da API quebra.
+	var deleteErr error
+	if r.URL.Query().Get("reparent_children") == "1" {
+		deleteErr = h.svc.DeleteWithReparent(r.Context(), id, actorFrom(r))
+	} else {
+		deleteErr = h.svc.Delete(r.Context(), id, actorFrom(r))
+	}
+	if deleteErr != nil {
+		httpx.Fail(w, r, deleteErr)
+		return
+	}
+	httpx.NoContent(w)
+}
+
+func (h *Handler) audit(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	list, err := h.svc.Audit(r.Context(), id, queryInt(r, "limit", 100))
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": list})
+}
+
+func (h *Handler) bulk(w http.ResponseWriter, r *http.Request) {
+	var in BulkInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	results, err := h.svc.Bulk(r.Context(), in, actorFrom(r))
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+func (h *Handler) duplicateSubtree(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	var in DuplicateSubtreeInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	created, err := h.svc.DuplicateSubtree(r.Context(), id, in.Suffix, actorFrom(r))
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, created)
+}
+
+func (h *Handler) reorderAttachments(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	var in ReorderInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	n, err := h.svc.ReorderAttachments(r.Context(), id, in.OrderedIDs)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"updated": n})
+}
+
+func (h *Handler) renameAttachment(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	var in RenameAttachmentInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	if err := h.svc.RenameAttachment(r.Context(), id, in.Filename); err != nil {
 		httpx.Fail(w, r, err)
 		return
 	}
 	httpx.NoContent(w)
+}
+
+func (h *Handler) importPreview(w http.ResponseWriter, r *http.Request) {
+	var in ImportInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	result, err := h.svc.ImportPreview(r.Context(), in.CSV)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) importCommit(w http.ResponseWriter, r *http.Request) {
+	var in ImportInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	result, err := h.svc.ImportCommit(r.Context(), in.CSV, actorFrom(r))
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) positions(w http.ResponseWriter, r *http.Request) {

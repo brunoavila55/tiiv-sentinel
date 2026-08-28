@@ -87,8 +87,20 @@ no WhatsApp.
 └──────────────┴────────────────────────┴───────────────┘
 ```
 
-**Atalhos:** `Ctrl/Cmd+K` abre a busca global (setas + Enter, sem mouse);
-`Ctrl/Cmd+C` com um ativo selecionado copia o IP de gerencia.
+**Atalhos:** `Ctrl/Cmd+K` busca global (setas + Enter, sem mouse); `Ctrl/Cmd+C`
+com um ativo selecionado copia o IP de gerencia; `N` abre o cadastro de um
+ativo novo.
+
+Banco vazio mostra uma tela de boas-vindas ("criar primeiro ativo" /
+"importar CSV" / carregar dados de exemplo) em vez do layout de tres paineis —
+excluir o ultimo ativo volta pra essa tela. Criar/editar ativo usa um drawer
+unico com busca de pai, "salvar e criar outro" (mantem pai e tipo pro proximo
+cadastro — montar um POP inteiro e uma sequencia de "adicionar filho", nao
+uma escolha de pai repetida) e sugestao de atributos por `kind`. Mover por
+drag-and-drop bloqueia visualmente soltar dentro do proprio subtree antes de
+chegar na API; apagar ativo com filhos oferece mover os filhos diretos pro avo
+em vez de exclusao em cascata (que nunca existe neste sistema). Largura dos
+paineis e filtros do canvas (chips por `kind`) ficam salvos em `localStorage`.
 
 **Canvas:** mostra o trecho ao redor da selecao (profundidade ajustavel), com
 filtro por tipo, minimapa e fit-to-view no subtree — nao na rede inteira.
@@ -113,17 +125,47 @@ GET    /api/assets                       filtros: kind, status, parent_id, q
 GET    /api/assets/tree?root=&depth=     subtree por CTE recursiva
 GET    /api/assets/:id                   ativo + breadcrumb + filhos + anexos
 POST   /api/assets    PATCH /api/assets/:id    DELETE /api/assets/:id  (409 com filhos)
+DELETE /api/assets/:id?reparent_children=1   apaga movendo os filhos diretos para o avo antes (sem cascata)
 PATCH  /api/assets/:id/parent            move validando ciclo (400)
 POST   /api/assets/positions             gravacao em lote das posicoes do canvas
+POST   /api/assets/bulk                  operacao em lote (set_kind/set_parent/add_attr/delete), item a item
+POST   /api/assets/:id/duplicate-subtree recria o subtree como irmao, nomes sufixados, transacional
+POST   /api/assets/import/preview        valida CSV (name,kind,parent_name,mgmt_ip,description) sem gravar
+POST   /api/assets/import/commit         grava o CSV inteiro numa transacao — ou tudo, ou nada
+GET    /api/assets/:id/audit             historico do ativo (asset_audit)
 GET    /api/search?q=                    IP exato vem em primeiro
 POST   /api/assets/:id/attachments/presign   → upload_url (PUT direto no MinIO)
 POST   /api/assets/:id/attachments           confirma e grava metadados
+POST   /api/assets/:id/attachments/reorder   grava sort_order (arrastar a galeria)
 GET    /api/attachments/:id/url?download=1   presigned GET (15min)
+PATCH  /api/attachments/:id              renomeia (so filename; object_key nunca muda)
 DELETE /api/attachments/:id
+PATCH  /api/auth/users/:id/active        desativa/reativa (derruba sessoes ao desativar)
+POST   /api/auth/users/:id/reset-password
 GET    /api/events                       SSE: status_changed, updated, attachment.added
-GET    /api/config                       mapa de kinds e acoes
+GET    /api/config                       mapa de kinds, acoes e kind_templates (attrs sugeridos por tipo)
 GET    /healthz                          valida Postgres e MinIO
 ```
+
+`GET /api/assets/:id` (Detail) agora tambem devolve `descendant_count` (subtree
+inteiro, nao so filhos diretos) e `asset.cover_attachment_id` — nenhum campo
+existente mudou de forma.
+
+### Templates de atributos por tipo
+
+`internal/config/kind-templates.default.json` sugere as chaves usuais de
+`attrs` quando o formulario troca de `kind` (porta PON pro OLT, SSID pro AP,
+etc.) — sem apagar valor ja preenchido e bloqueando chave duplicada. Segue o
+mesmo padrao do `kinds.default.json`: `KIND_TEMPLATES_FILE` aponta pra um JSON
+externo pra ajustar sem recompilar, do jeito que `KINDS_FILE` ja fazia.
+
+### Auditoria
+
+`asset_audit` grava `create`/`update`/`move`/`delete` com `changes jsonb` (so
+os campos que mudaram) e uma copia de `asset_name`/`user_email` no momento da
+acao — sobrevive a apagar o ativo ou o usuario, porque "quem apagou esse
+ativo" e a pergunta que essa tabela existe pra responder. Sem FK em `asset_id`
+de proposito, pelo mesmo motivo.
 
 Acrescentados pela PWA de campo (aditivos; nada acima mudou de contrato):
 
@@ -159,7 +201,10 @@ Arvore em adjacency list (`assets.parent_id`), navegada por CTE recursiva —
 descer e subir usam a mesma CTE com o join invertido. `parent_id` e
 `on delete restrict` de proposito: ninguem apaga um POP e leva 300 ativos junto.
 Campos especificos por tipo (porta PON, SSID, vendor) vivem em `attrs jsonb`,
-com indice GIN — sem coluna nova por equipamento.
+com indice GIN — sem coluna nova por equipamento. `asset_attachments.sort_order`
+guarda a ordem de exibicao (arrastar a galeria) e `assets.cover_attachment_id`
+a foto de capa (`on delete set null`, some sozinho se a foto for removida).
+`users.active` desativa conta sem apagar o rastro de auditoria dela.
 
 ### Supressao de alerta em cascata
 

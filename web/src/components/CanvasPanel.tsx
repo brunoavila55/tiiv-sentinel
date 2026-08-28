@@ -40,8 +40,20 @@ function dagreLayout(assets: Asset[]): Map<string, { x: number; y: number }> {
   return out
 }
 
+const HIDDEN_KINDS_KEY = 'sentinel.canvas.hiddenKinds'
+
+function loadHiddenKinds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_KINDS_KEY)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
+}
+
 export function CanvasPanel(props: {
   items: Asset[]
+  totalAssets: number
   selectedId?: string
   kinds: KindConfig[]
   onSelect: (id: string) => void
@@ -56,12 +68,14 @@ export function CanvasPanel(props: {
 
 function Canvas({
   items,
+  totalAssets,
   selectedId,
   kinds,
   onSelect,
   canPersist,
 }: {
   items: Asset[]
+  totalAssets: number
   selectedId?: string
   kinds: KindConfig[]
   onSelect: (id: string) => void
@@ -69,7 +83,11 @@ function Canvas({
 }) {
   const flow = useReactFlow()
   const [depth, setDepth] = useState(2)
-  const [hidden, setHidden] = useState<string[]>([])
+  const [hidden, setHidden] = useState<string[]>(loadHiddenKinds)
+
+  useEffect(() => {
+    window.localStorage.setItem(HIDDEN_KINDS_KEY, JSON.stringify(hidden))
+  }, [hidden])
   const [nodes, setNodes] = useState<Node<AssetNodeData>[]>([])
   const pending = useRef(new Map<string, { pos_x: number; pos_y: number }>())
   const timer = useRef<number | undefined>(undefined)
@@ -155,35 +173,44 @@ function Canvas({
 
   return (
     <section className="panel canvas-panel">
-      <div className="canvas-toolbar">
-        <label className="depth">
-          profundidade
-          <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} />
-          <span>{depth}</span>
-        </label>
-        <div className="kind-filter">
-          {kinds.map((kind) => {
-            const off = hidden.includes(kind.id)
-            return (
-              <button
-                key={kind.id}
-                className={`chip ${off ? 'off' : ''}`}
-                style={off ? undefined : { borderColor: kind.color, color: kind.color }}
-                onClick={() =>
-                  setHidden((current) =>
-                    current.includes(kind.id) ? current.filter((k) => k !== kind.id) : [...current, kind.id],
-                  )
-                }
-              >
-                {kind.label}
-              </button>
-            )
-          })}
+      {totalAssets > 0 && (
+        <div className="canvas-toolbar">
+          <label className="depth">
+            profundidade
+            <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} />
+            <span>{depth}</span>
+          </label>
+          <div className="kind-filter">
+            {kinds.map((kind) => {
+              const off = hidden.includes(kind.id)
+              return (
+                <button
+                  key={kind.id}
+                  className={`chip ${off ? 'off' : ''}`}
+                  style={off ? undefined : { borderColor: kind.color, color: kind.color }}
+                  onClick={() =>
+                    setHidden((current) =>
+                      current.includes(kind.id) ? current.filter((k) => k !== kind.id) : [...current, kind.id],
+                    )
+                  }
+                >
+                  {kind.label}
+                </button>
+              )
+            })}
+          </div>
+          {hidden.length > 0 && (
+            <button className="link small filter-clear" onClick={() => setHidden([])}>
+              {hidden.length} filtro(s) ativo(s) · limpar
+            </button>
+          )}
         </div>
-      </div>
+      )}
       <div className="canvas-body">
         {nodes.length === 0 ? (
-          <div className="muted pad">selecione um ativo na arvore para ver a topologia</div>
+          <div className="muted pad">
+            {totalAssets === 0 ? 'nenhum ativo cadastrado ainda' : 'selecione um ativo na árvore para ver a topologia'}
+          </div>
         ) : (
           <ReactFlow
             nodes={nodes}

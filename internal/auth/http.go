@@ -173,6 +173,54 @@ func (h *Handler) usersRoutes(r chi.Router) {
 	r.Get("/", h.listUsers)
 	r.Post("/", h.createUser)
 	r.Delete("/{id}", h.deleteUser)
+	r.Patch("/{id}/active", h.setActive)
+	r.Post("/{id}/reset-password", h.resetPassword)
+}
+
+func (h *Handler) setActive(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Fail(w, r, apperr.Validation("invalid_id", "id invalido"))
+		return
+	}
+	var req struct {
+		Active bool `json:"active"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	if !req.Active {
+		if current := UserFrom(r.Context()); current != nil && current.ID == id {
+			httpx.Fail(w, r, apperr.Validation("self_deactivate", "voce nao pode desativar a propria conta"))
+			return
+		}
+	}
+	if err := h.svc.SetActive(r.Context(), id, req.Active); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
+func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Fail(w, r, apperr.Validation("invalid_id", "id invalido"))
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	if err := h.svc.ResetPassword(r.Context(), id, req.Password); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
 }
 
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {

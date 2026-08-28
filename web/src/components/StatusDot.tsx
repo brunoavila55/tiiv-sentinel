@@ -10,7 +10,7 @@ export function StatusDot({ asset, title }: { asset: Pick<Asset, 'status' | 'sup
     up: 'up',
     down: 'down',
     unknown: 'sem ping',
-    symptom: 'down por consequencia (ancestral caiu)',
+    symptom: 'down por consequência (ancestral caiu)',
   }
   return <span className={`dot dot-${state}`} title={title ?? labels[state]} />
 }

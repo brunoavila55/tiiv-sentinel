@@ -6,7 +6,7 @@ with recursive subtree as (
   select c.id from assets c join subtree s on c.parent_id = s.id
 )
 select at.id, at.asset_id, at.kind, at.object_key, at.thumb_key, at.filename,
-       at.mime_type, at.size_bytes, at.sha256, at.captured_at, at.created_at
+       at.mime_type, at.size_bytes, at.sha256, at.sort_order, at.captured_at, at.created_at
   from asset_attachments at
   join subtree s on s.id = at.asset_id
- order by at.asset_id, at.created_at desc;
+ order by at.asset_id, at.sort_order, at.created_at desc;

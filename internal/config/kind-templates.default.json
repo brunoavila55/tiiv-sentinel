@@ -1,0 +1,40 @@
+{
+  "templates": {
+    "pop": [
+      { "key": "endereco", "type": "string", "default": "" },
+      { "key": "energia", "type": "string", "default": "" },
+      { "key": "climatizacao", "type": "string", "default": "" }
+    ],
+    "router": [
+      { "key": "vendor", "type": "string", "default": "" },
+      { "key": "modelo", "type": "string", "default": "" },
+      { "key": "firmware", "type": "string", "default": "" }
+    ],
+    "switch": [
+      { "key": "vendor", "type": "string", "default": "" },
+      { "key": "modelo", "type": "string", "default": "" },
+      { "key": "portas", "type": "number", "default": 24 },
+      { "key": "gerenciavel", "type": "boolean", "default": true }
+    ],
+    "olt": [
+      { "key": "vendor", "type": "string", "default": "" },
+      { "key": "chassi", "type": "string", "default": "" },
+      { "key": "firmware", "type": "string", "default": "" },
+      { "key": "portas_pon", "type": "number", "default": 16 }
+    ],
+    "ap": [
+      { "key": "vendor", "type": "string", "default": "" },
+      { "key": "modelo", "type": "string", "default": "" },
+      { "key": "ssid", "type": "string", "default": "" },
+      { "key": "canal", "type": "number", "default": 0 }
+    ],
+    "link": [
+      { "key": "tecnologia", "type": "string", "default": "" },
+      { "key": "capacidade_mbps", "type": "number", "default": 0 }
+    ],
+    "cliente": [
+      { "key": "contrato", "type": "string", "default": "" },
+      { "key": "plano", "type": "string", "default": "" }
+    ]
+  }
+}

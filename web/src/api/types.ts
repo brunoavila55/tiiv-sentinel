@@ -15,6 +15,7 @@ export interface Asset {
   suppressed: boolean
   pos_x: number | null
   pos_y: number | null
+  cover_attachment_id: string | null
   child_count: number
   depth: number
   created_at: string
@@ -31,6 +32,7 @@ export interface Attachment {
   mime_type: string
   size_bytes: number
   sha256: string | null
+  sort_order: number
   captured_at: string | null
   created_at: string
   url?: string
@@ -42,6 +44,58 @@ export interface AssetDetail {
   breadcrumb: Asset[]
   children: Asset[]
   attachments: Attachment[]
+  descendant_count: number
+}
+
+export interface AuditEntry {
+  id: string
+  asset_id: string
+  asset_name: string
+  user_id: string | null
+  user_email: string
+  action: 'create' | 'update' | 'move' | 'delete'
+  changes: Record<string, { from: unknown; to: unknown } | unknown>
+  created_at: string
+}
+
+export type BulkOp = 'set_kind' | 'set_parent' | 'add_attr' | 'delete'
+
+export interface BulkInput {
+  ids: string[]
+  op: BulkOp
+  kind?: string
+  parent_id?: string | null
+  attr_key?: string
+  attr_value?: unknown
+}
+
+export interface BulkResult {
+  id: string
+  ok: boolean
+  error?: string
+}
+
+export type ImportRowStatus = 'ok' | 'exists' | 'error'
+
+export interface ImportRow {
+  line: number
+  name: string
+  kind: string
+  parent_name: string
+  mgmt_ip: string
+  description: string
+  status: ImportRowStatus
+  error?: string
+  existing_id?: string
+}
+
+export interface ImportResult {
+  rows: ImportRow[]
+  total: number
+  ok_count: number
+  exists_count: number
+  error_count: number
+  committed: boolean
 }
 
 export interface KindAction {
@@ -59,8 +113,15 @@ export interface KindConfig {
   actions: KindAction[]
 }
 
+export interface TemplateField {
+  key: string
+  type: 'string' | 'number' | 'boolean'
+  default: unknown
+}
+
 export interface AppConfig {
   kinds: KindConfig[]
+  kind_templates: Record<string, TemplateField[]>
   max_upload: number
   poll_interval: number
   poll_enabled: boolean
@@ -70,6 +131,7 @@ export interface User {
   id: string
   email: string
   role: 'admin' | 'viewer'
+  active: boolean
   created_at: string
 }
 

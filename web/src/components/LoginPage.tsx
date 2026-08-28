@@ -25,7 +25,7 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
     <div className="login">
       <form className="login-card" onSubmit={submit}>
         <h1>tiiv <span>sentinel</span></h1>
-        <p className="muted">Documentacao e acesso aos ativos de rede.</p>
+        <p className="muted">Documentação e acesso aos ativos de rede.</p>
         <label>
           Email
           <input

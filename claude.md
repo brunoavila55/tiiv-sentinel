@@ -104,10 +104,13 @@ select * from subtree order by depth, name;
 
 Pontos de atenção:
 
-- `parent_id` é `on delete restrict` de propósito. Ninguém apaga um POP e leva 300 ativos junto.
+- `parent_id` é `on delete restrict` de propósito. Ninguém apaga um POP e leva 300 ativos junto. **Nunca implemente exclusão em cascata, em nenhuma variação** — a UI oferece `DELETE /api/assets/:id?reparent_children=1`, que sobe os filhos diretos para o avô antes de apagar, em vez de levar o subtree junto.
 - Mover nó valida ciclo na aplicação (destino não pode estar no próprio subtree) → 400.
-- `attrs jsonb` absorve campos específicos por tipo (OLT tem porta PON, AP tem SSID). Não crie coluna nova para cada tipo de equipamento; índice GIN já existe.
+- `attrs jsonb` absorve campos específicos por tipo (OLT tem porta PON, AP tem SSID). Não crie coluna nova para cada tipo de equipamento; índice GIN já existe. Os atributos sugeridos por `kind` (o que o formulário pré-preenche ao trocar o tipo) ficam em `internal/config/kind-templates.default.json` — mesmo padrão do `kinds.default.json`, não em componente nem em tabela.
 - `sha256` em anexo `kind=config` serve para detectar mudança de configuração sem diff completo.
+- `asset_attachments.sort_order` é a ordem de exibição (arrastar a galeria); `assets.cover_attachment_id` é a foto de capa, com `on delete set null` — some sozinho se a foto for removida.
+- `asset_audit` (`asset_id`, `user_id`, `action`, `changes jsonb`, `created_at`) registra create/update/move/delete. Sem FK em `asset_id`: o rastro de "quem apagou esse ativo" precisa sobreviver ao próprio apagar. `asset_name`/`user_email` ficam copiados no momento da ação pelo mesmo motivo.
+- `users.active` desativa uma conta sem apagar o histórico de auditoria vinculado a ela; desativar derruba as sessões abertas na hora.
 
 ---
 
@@ -128,6 +131,8 @@ Pontos de atenção:
 - Contexto propagado em toda query; timeout por request.
 - Poller com worker pool de concorrência limitada (~50), nunca uma goroutine por ativo.
 - Log estruturado (`slog`), sem log de payload de upload.
+- Escrita que precisa registrar auditoria recebe `actor ...Actor` variádico no fim da assinatura (`Service.Create/Update/Move/Delete`) — variádico para não quebrar quem já chama sem ator (testes, seed); só os handlers HTTP passam o `Actor` de verdade, resolvido de `auth.UserFrom(ctx)`.
+- Operação que cruza múltiplos inserts que têm que entrar juntos ou nenhum (import CSV, duplicar subtree) usa `pgx.BeginFunc` direto no pool do `Store` (`Store.Pool()` + variante `...Tx` do método). Não é o padrão do resto do domínio — só entra quando a atomicidade é o ponto central da feature.
 
 ### SQL
 
@@ -139,6 +144,9 @@ Queries em arquivo, não em string concatenada dentro de handler. Sempre paramet
 - Estado de seleção na URL (`/assets/:id`) — link de ativo precisa ser compartilhável no WhatsApp.
 - Ações por equipamento (`ssh://`, `http://`, `winbox://`) vêm de um mapa configurável por `kind`, nunca hardcoded em componente.
 - Alvos de toque ≥ 44px em toda a PWA. O técnico pode estar de luva.
+- Criar e editar ativo passam sempre por `AssetDrawer` (busca de pai, attrs com template por `kind`, "salvar e criar outro") — não crie um segundo formulário de ativo; estenda esse.
+- Preferência de UI só do navegador (largura de painel, filtro de `kind` ativo) vai em `localStorage`, nunca em tabela nova — é conveniência de sessão, não dado de negócio.
+- Nenhuma lib nova de formulário, estado ou UI sem justificar forte; o que já está no projeto (TanStack Query, `react-arborist`, React Flow) resolve o que falta.
 
 ---
 
@@ -167,7 +175,8 @@ Antes de considerar uma tarefa pronta, verifique:
 - [ ] `docker compose down && up` preserva dados e arquivos
 - [ ] Presigned URL abre no navegador (não só de dentro do container)
 - [ ] Deletar ativo não deixa objeto órfão no MinIO
-- [ ] Teste cobre: CTE de subtree, validação de ciclo, ciclo presign/upload/confirm
+- [ ] Teste cobre: CTE de subtree, validação de ciclo, ciclo presign/upload/confirm, exclusão com reparent preserva descendentes, import CSV é tudo-ou-nada
+- [ ] Escrita nova em `assets` (create/update/move/delete) grava linha em `asset_audit`
 
 ---
 
@@ -177,7 +186,40 @@ Antes de considerar uma tarefa pronta, verifique:
 
 **Fase 2 — PWA mobile.** Consome a mesma API; endpoints novos são aditivos, contratos existentes não mudam. Ver `prompt-2-mobile-pwa.md`.
 
+**Fase 3 — CRUD completo, edição e preenchimento de lacunas.** Fechou o ciclo criar/editar/mover/excluir pela interface (sem SQL manual), auditoria, import CSV, edição em massa, ciclo de vida de anexos, gestão de usuário. Ver abaixo.
+
 Não construa nada de mobile durante a fase 1 além de manter a API preparada (sessão persistida, sem estado em memória).
+
+> `prompt-1-desktop.md` e `prompt-2-mobile-pwa.md` são referenciados acima mas
+> não existem neste repositório — se um prompt novo pedir a leitura deles,
+> sinalize a ausência antes de prosseguir, como este documento já cobre o
+> essencial do que eles definiriam.
+
+---
+
+## Fase 3 — o que mudou
+
+Backend, endpoints novos (aditivos — nenhum contrato de fase 1/2 mudou de forma):
+
+- `POST /api/assets/bulk`, `POST /api/assets/:id/duplicate-subtree`, `POST /api/assets/import/{preview,commit}`, `GET /api/assets/:id/audit`
+- `DELETE /api/assets/:id?reparent_children=1` — apaga movendo os filhos diretos para o avô, alternativa a exclusão em cascata (que continua não existindo em nenhuma variação)
+- `PATCH /api/attachments/:id` (renomear), `POST /api/assets/:id/attachments/reorder`
+- `PATCH /api/auth/users/:id/active`, `POST /api/auth/users/:id/reset-password`
+- `PATCH /api/assets/:id` aceita agora `cover_attachment_id` e `status` (override manual — o poller ainda é quem escreve na maior parte do tempo; útil pra ativo sem `mgmt_ip`)
+
+Schema (migration `0003_audit_cover_active.sql`, reversível): `asset_audit`
+(sem FK em `asset_id` — o rastro de auditoria precisa sobreviver a apagar o
+ativo), `users.active`, `asset_attachments.sort_order`,
+`assets.cover_attachment_id` (`on delete set null`).
+
+Decisões que valem registrar (o porquê; o padrão em si já está em "Convenções de código" e "Modelo de dados" acima):
+
+- **Import CSV é JSON, não multipart.** `POST /api/assets/import/preview|commit` recebe `{"csv": "<texto>"}` — o cliente lê o arquivo local como texto e manda a string. Não conflita com "arquivo nunca passa pela API": aquela regra é sobre attachment binário indo pro MinIO, CSV é dado estruturado indo pro Postgres, mesma categoria de um `PATCH` com JSON grande.
+- **Foto de capa não aparece no card do canvas nem na árvore.** `cover_attachment_id` é só um id — resolver pra URL assinada em toda a árvore/canvas significaria presign por nó em telas com centenas deles. Capa fica resolvida só no `Detail` (cabeçalho + galeria) e na lista de filhos diretos, onde o conjunto é pequeno. Se isso virar requisito real de UI, meça o custo do presign em lote antes de estender pro canvas.
+- **`AssetDrawer` substituiu `NewAssetDialog` e `AssetFields`.** Um componente só pra criar e editar (parent com busca, attrs com template por `kind`, "salvar e criar outro"); os dois antigos foram apagados, não deprecados.
+- **`config/kind-templates.json` do prompt virou `internal/config/kind-templates.default.json`.** Mesmo padrão do `kinds.default.json`: embutido no binário, `KIND_TEMPLATES_FILE` aponta pra um externo sem recompilar. Não existe diretório `config/` na raiz deste projeto Go; manter os dois arquivos de configuração no mesmo lugar (`internal/config/`) foi priorizado sobre seguir o path literal do prompt.
+- **Arrastar na árvore também pede confirmação com contagem de descendentes**, não só o drawer de edição — bloquear soltar dentro do próprio subtree é validação de ciclo (client-side, espelhando a validação real que já existe no backend); avisar quantos descendentes vão junto é UX, e vale tanto pro drag-and-drop quanto pra troca de pai pelo formulário.
+- **Desfazer (P2) é só client-side.** Mover: já comita na hora (mover de volta não perde nada), o toast com "desfazer" apenas dispara um segundo move. Apagar: o `DELETE` real só é chamado ~10s depois — o ativo some da árvore/canvas na hora (filtro local em `App.tsx`), mas continua existindo no servidor até o timer estourar; "desfazer" é só cancelar o timer, nada para recriar. Isso é o que faz a exclusão ser genuinamente reversível apesar de já apagar os anexos do MinIO quando confirmada.
 
 ---
 

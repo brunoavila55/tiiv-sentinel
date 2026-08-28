@@ -33,6 +33,7 @@ type User struct {
 	ID        uuid.UUID `json:"id"`
 	Email     string    `json:"email"`
 	Role      Role      `json:"role"`
+	Active    bool      `json:"active"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -78,9 +79,9 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role R
 	)
 	err = s.pool.QueryRow(ctx,
 		`insert into users (email, password_hash, role) values ($1, $2, $3)
-		 returning id, email, role, created_at`,
+		 returning id, email, role, active, created_at`,
 		email, hash, string(role),
-	).Scan(&u.ID, &u.Email, &roleStr, &u.CreatedAt)
+	).Scan(&u.ID, &u.Email, &roleStr, &u.Active, &u.CreatedAt)
 	u.Role = Role(roleStr)
 	if err != nil {
 		if strings.Contains(err.Error(), "users_email_lower_idx") {
@@ -108,8 +109,8 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, str
 		roleStr string
 	)
 	err := s.pool.QueryRow(ctx,
-		`select id, email, role, created_at, password_hash from users where lower(email) = $1`, email,
-	).Scan(&u.ID, &u.Email, &roleStr, &u.CreatedAt, &hash)
+		`select id, email, role, active, created_at, password_hash from users where lower(email) = $1`, email,
+	).Scan(&u.ID, &u.Email, &roleStr, &u.Active, &u.CreatedAt, &hash)
 	u.Role = Role(roleStr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Hash descartavel para o tempo de resposta nao denunciar se o email existe.
@@ -125,6 +126,9 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, str
 	}
 	if !ok {
 		return nil, "", time.Time{}, apperr.Unauthorized("invalid_credentials", "email ou senha invalidos")
+	}
+	if !u.Active {
+		return nil, "", time.Time{}, apperr.Unauthorized("user_inactive", "usuario desativado")
 	}
 
 	token, err := newToken()
@@ -166,10 +170,10 @@ func (s *Service) SessionByToken(ctx context.Context, token string) (*Session, e
 	err := s.pool.QueryRow(ctx,
 		`update sessions s set seen_at = now()
 		   from users u
-		  where s.id = $1 and s.expires_at > now() and u.id = s.user_id
-		 returning u.id, u.email, u.role, u.created_at, s.expires_at`,
+		  where s.id = $1 and s.expires_at > now() and u.id = s.user_id and u.active
+		 returning u.id, u.email, u.role, u.active, u.created_at, s.expires_at`,
 		tokenID(token),
-	).Scan(&u.ID, &u.Email, &roleStr, &u.CreatedAt, &sess.ExpiresAt)
+	).Scan(&u.ID, &u.Email, &roleStr, &u.Active, &u.CreatedAt, &sess.ExpiresAt)
 	u.Role = Role(roleStr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.Unauthorized("invalid_session", "sessao expirada ou invalida")
@@ -205,10 +209,10 @@ func (s *Service) Renew(ctx context.Context, token string) (*Session, error) {
 		`update sessions s
 		    set expires_at = now() + make_interval(secs => $2::float8), seen_at = now()
 		   from users u
-		  where s.id = $1 and s.expires_at > now() and u.id = s.user_id
-		 returning u.id, u.email, u.role, u.created_at, s.expires_at`,
+		  where s.id = $1 and s.expires_at > now() and u.id = s.user_id and u.active
+		 returning u.id, u.email, u.role, u.active, u.created_at, s.expires_at`,
 		tokenID(token), s.sessionTTL.Seconds(),
-	).Scan(&u.ID, &u.Email, &roleStr, &u.CreatedAt, &sess.ExpiresAt)
+	).Scan(&u.ID, &u.Email, &roleStr, &u.Active, &u.CreatedAt, &sess.ExpiresAt)
 	u.Role = Role(roleStr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.Unauthorized("invalid_session", "sessao expirada ou invalida")
@@ -264,7 +268,7 @@ func tokenID(token string) string {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.pool.Query(ctx, `select id, email, role, created_at from users order by email`)
+	rows, err := s.pool.Query(ctx, `select id, email, role, active, created_at from users order by email`)
 	if err != nil {
 		return nil, apperr.Internal(err, "listando usuarios")
 	}
@@ -275,7 +279,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 			u       User
 			roleStr string
 		)
-		if err := rows.Scan(&u.ID, &u.Email, &roleStr, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &roleStr, &u.Active, &u.CreatedAt); err != nil {
 			return nil, apperr.Internal(err, "lendo usuarios")
 		}
 		u.Role = Role(roleStr)
@@ -292,6 +296,48 @@ func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return apperr.NotFound("user_not_found", "usuario nao encontrado")
+	}
+	return nil
+}
+
+// SetActive desativa ou reativa uma conta sem apagar o historico de auditoria
+// vinculado a ela. Desativar encerra as sessoes abertas na hora: nao adianta
+// tirar acesso e deixar quem ja estava logado continuar.
+func (s *Service) SetActive(ctx context.Context, id uuid.UUID, active bool) error {
+	tag, err := s.pool.Exec(ctx, `update users set active = $2 where id = $1`, id, active)
+	if err != nil {
+		return apperr.Internal(err, "atualizando usuario")
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("user_not_found", "usuario nao encontrado")
+	}
+	if !active {
+		if _, err := s.pool.Exec(ctx, `delete from sessions where user_id = $1`, id); err != nil {
+			return apperr.Internal(err, "encerrando sessoes do usuario")
+		}
+	}
+	return nil
+}
+
+// ResetPassword troca a senha e derruba as sessoes abertas — a nova senha so
+// vale a partir de um novo login.
+func (s *Service) ResetPassword(ctx context.Context, id uuid.UUID, newPassword string) error {
+	if len(newPassword) < 8 {
+		return apperr.Validation("weak_password", "senha deve ter pelo menos 8 caracteres")
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return apperr.Internal(err, "gerando hash de senha")
+	}
+	tag, err := s.pool.Exec(ctx, `update users set password_hash = $2 where id = $1`, id, hash)
+	if err != nil {
+		return apperr.Internal(err, "atualizando senha")
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("user_not_found", "usuario nao encontrado")
+	}
+	if _, err := s.pool.Exec(ctx, `delete from sessions where user_id = $1`, id); err != nil {
+		return apperr.Internal(err, "encerrando sessoes do usuario")
 	}
 	return nil
 }

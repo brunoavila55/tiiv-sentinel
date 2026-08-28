@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
-import type { Asset } from './types'
+import type { Asset, BulkInput } from './types'
 
 export const keys = {
   me: ['me'] as const,
@@ -8,6 +8,8 @@ export const keys = {
   tree: ['tree'] as const,
   asset: (id: string) => ['asset', id] as const,
   search: (q: string) => ['search', q] as const,
+  audit: (id: string) => ['audit', id] as const,
+  users: ['users'] as const,
 }
 
 export function useMe() {
@@ -66,8 +68,49 @@ export function useCreateAsset() {
 export function useDeleteAsset() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.deleteAsset(id),
+    mutationFn: ({ id, reparentChildren }: { id: string; reparentChildren?: boolean }) =>
+      api.deleteAsset(id, { reparentChildren }),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.tree }),
+  })
+}
+
+export function useDuplicateSubtree() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, suffix }: { id: string; suffix: string }) => api.duplicateSubtree(id, suffix),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tree }),
+  })
+}
+
+export function useBulk() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: BulkInput) => api.bulk(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tree }),
+  })
+}
+
+export function useAudit(assetId: string | undefined) {
+  return useQuery({
+    queryKey: keys.audit(assetId ?? ''),
+    queryFn: () => api.audit(assetId as string),
+    enabled: Boolean(assetId),
+  })
+}
+
+export function useRenameAttachment(assetId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, filename }: { id: string; filename: string }) => api.renameAttachment(id, filename),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.asset(assetId) }),
+  })
+}
+
+export function useReorderAttachments(assetId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (orderedIds: string[]) => api.reorderAttachments(assetId, orderedIds),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.asset(assetId) }),
   })
 }
 

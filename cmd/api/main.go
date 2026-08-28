@@ -92,6 +92,10 @@ func serve(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	templates, err := config.LoadTemplates(cfg.KindTemplatesFile)
+	if err != nil {
+		return err
+	}
 
 	hub := events.NewHub()
 	authSvc := auth.NewService(pool, cfg.SessionTTL)
@@ -115,7 +119,7 @@ func serve(ctx context.Context, cfg *config.Config) error {
 
 	go purgeSessions(ctx, authSvc)
 
-	router := newRouter(cfg, pool, store, hub, authSvc, assetSvc, kinds)
+	router := newRouter(cfg, pool, store, hub, authSvc, assetSvc, kinds, templates)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

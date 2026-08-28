@@ -27,6 +27,7 @@ func newRouter(
 	authSvc *auth.Service,
 	assetSvc *asset.Service,
 	kinds *config.Kinds,
+	templates *config.Templates,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -62,10 +63,11 @@ func newRouter(
 			r.Use(middleware.Timeout(30 * time.Second))
 			r.Get("/config", func(w http.ResponseWriter, r *http.Request) {
 				httpx.JSON(w, http.StatusOK, map[string]any{
-					"kinds":         kinds.Kinds,
-					"max_upload":    cfg.MaxUploadBytes,
-					"poll_interval": cfg.PollInterval.Seconds(),
-					"poll_enabled":  cfg.PollEnabled,
+					"kinds":          kinds.Kinds,
+					"kind_templates": templates.Templates,
+					"max_upload":     cfg.MaxUploadBytes,
+					"poll_interval":  cfg.PollInterval.Seconds(),
+					"poll_enabled":   cfg.PollEnabled,
 				})
 			})
 			assetHandler.Routes(r)

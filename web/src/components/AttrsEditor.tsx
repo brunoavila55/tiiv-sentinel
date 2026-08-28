@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { attrsToRows, duplicateKeys, rowsToAttrs } from '../lib/attrs'
 
 type Attrs = Record<string, unknown>
 
@@ -21,9 +22,11 @@ export function AttrsEditor({
   const [dirty, setDirty] = useState(false)
 
   useEffect(() => {
-    setRows(Object.entries(attrs ?? {}).map(([k, v]) => [k, stringify(v)]))
+    setRows(attrsToRows(attrs))
     setDirty(false)
   }, [attrs])
+
+  const dupes = duplicateKeys(rows)
 
   const update = (index: number, key: string, value: string) => {
     setRows((current) => current.map((row, i) => (i === index ? [key, value] : row)))
@@ -31,13 +34,8 @@ export function AttrsEditor({
   }
 
   const commit = () => {
-    const next: Attrs = {}
-    for (const [key, value] of rows) {
-      const name = key.trim()
-      if (!name) continue
-      next[name] = parse(value)
-    }
-    onSave(next)
+    if (dupes.length > 0) return
+    onSave(rowsToAttrs(rows))
     setDirty(false)
   }
 
@@ -52,7 +50,11 @@ export function AttrsEditor({
             <tr key={`${index}-${key}`}>
               <td>
                 {canEdit ? (
-                  <input value={key} onChange={(e) => update(index, e.target.value, value)} />
+                  <input
+                    value={key}
+                    className={dupes.includes(key.trim().toLowerCase()) ? 'invalid' : ''}
+                    onChange={(e) => update(index, e.target.value, value)}
+                  />
                 ) : (
                   <span className="attr-key">{key}</span>
                 )}
@@ -82,6 +84,9 @@ export function AttrsEditor({
           ))}
         </tbody>
       </table>
+      {canEdit && dupes.length > 0 && (
+        <p className="error small">chave repetida: {dupes.join(', ')}</p>
+      )}
       {canEdit && (
         <div className="row-actions">
           <button
@@ -93,34 +98,11 @@ export function AttrsEditor({
           >
             + atributo
           </button>
-          <button className="small" disabled={!dirty || saving} onClick={commit}>
+          <button className="small" disabled={!dirty || saving || dupes.length > 0} onClick={commit}>
             {saving ? 'salvando…' : 'salvar atributos'}
           </button>
         </div>
       )}
     </div>
   )
-}
-
-function stringify(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-/** Preserva numero e booleano; o resto fica string. */
-function parse(value: string): unknown {
-  const trimmed = value.trim()
-  if (trimmed === '') return ''
-  if (trimmed === 'true') return true
-  if (trimmed === 'false') return false
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed)
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.parse(trimmed)
-    } catch {
-      return value
-    }
-  }
-  return value
 }

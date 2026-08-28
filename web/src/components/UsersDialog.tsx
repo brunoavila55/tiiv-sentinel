@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../api/client'
 import type { User } from '../api/types'
 
-/** Gestao de contas: admin faz CRUD completo, viewer le e anexa foto. */
+/** Gestão de contas: admin faz CRUD completo, viewer lê e anexa foto. */
 export function UsersDialog({ current, onClose }: { current: User; onClose: () => void }) {
   const qc = useQueryClient()
   const users = useQuery({ queryKey: ['users'], queryFn: api.users })
@@ -21,23 +21,54 @@ export function UsersDialog({ current, onClose }: { current: User; onClose: () =
     },
   })
   const remove = useMutation({ mutationFn: api.deleteUser, onSuccess: invalidate })
+  const toggleActive = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.setUserActive(id, active),
+    onSuccess: invalidate,
+  })
+  const resetPassword = useMutation({
+    mutationFn: ({ id, password: pw }: { id: string; password: string }) => api.resetUserPassword(id, pw),
+  })
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Usuarios</h2>
-        <ul className="doc-list">
+        <h2>Usuários</h2>
+        <ul className="doc-list users-list">
           {(users.data ?? []).map((user) => (
             <li key={user.id}>
-              <span>{user.email}</span>
+              <span className={user.active ? '' : 'muted'}>{user.email}</span>
               <span className={`badge ${user.role === 'admin' ? 'admin' : ''}`}>{user.role}</span>
+              {!user.active && <span className="badge warn">inativo</span>}
               {user.id !== current.id && (
-                <button className="ghost small" onClick={() => remove.mutate(user.id)}>remover</button>
+                <>
+                  <button
+                    className="ghost small"
+                    onClick={() => {
+                      const next = window.prompt(`nova senha para ${user.email} (mínimo 8 caracteres)`)
+                      if (next) resetPassword.mutate({ id: user.id, password: next })
+                    }}
+                  >
+                    resetar senha
+                  </button>
+                  <button
+                    className="ghost small"
+                    onClick={() => toggleActive.mutate({ id: user.id, active: !user.active })}
+                  >
+                    {user.active ? 'desativar' : 'reativar'}
+                  </button>
+                  <button className="ghost small danger-text" onClick={() => remove.mutate(user.id)}>remover</button>
+                </>
               )}
             </li>
           ))}
           {users.isLoading && <li className="muted">carregando…</li>}
         </ul>
+        {resetPassword.isError && (
+          <div className="error">
+            {resetPassword.error instanceof ApiError ? resetPassword.error.message : 'falha ao resetar senha'}
+          </div>
+        )}
+        {resetPassword.isSuccess && <div className="muted small">senha atualizada.</div>}
 
         <form
           className="asset-fields"
@@ -51,7 +82,7 @@ export function UsersDialog({ current, onClose }: { current: User; onClose: () =
             <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
           <label>
-            Senha (minimo 8 caracteres)
+            Senha (mínimo 8 caracteres)
             <input
               type="password"
               required
@@ -63,7 +94,7 @@ export function UsersDialog({ current, onClose }: { current: User; onClose: () =
           <label>
             Papel
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'viewer')}>
-              <option value="viewer">viewer — le tudo e anexa fotos</option>
+              <option value="viewer">viewer — lê tudo e anexa fotos</option>
               <option value="admin">admin — CRUD completo</option>
             </select>
           </label>
@@ -79,7 +110,7 @@ export function UsersDialog({ current, onClose }: { current: User; onClose: () =
           )}
           <div className="modal-actions">
             <button type="button" className="ghost" onClick={onClose}>fechar</button>
-            <button type="submit" disabled={create.isPending}>criar usuario</button>
+            <button type="submit" disabled={create.isPending}>criar usuário</button>
           </div>
         </form>
       </div>

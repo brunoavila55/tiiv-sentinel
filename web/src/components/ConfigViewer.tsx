@@ -12,10 +12,12 @@ export function ConfigViewer({
   configs,
   canDelete,
   onDelete,
+  onRename,
 }: {
   configs: Attachment[]
   canDelete: boolean
   onDelete: (id: string) => void
+  onRename?: (id: string, filename: string) => void
 }) {
   const [selected, setSelected] = useState<Attachment | null>(configs[0] ?? null)
   const [text, setText] = useState<string>('')
@@ -44,25 +46,42 @@ export function ConfigViewer({
     }
   }, [selected])
 
-  if (configs.length === 0) return <p className="muted">nenhuma configuracao salva</p>
+  if (configs.length === 0) return <p className="muted">nenhuma configuração salva</p>
 
   return (
     <div className="configs">
       <ul className="config-list">
-        {configs.map((config) => (
-          <li key={config.id} className={config.id === selected?.id ? 'active' : ''}>
-            <button className="link" onClick={() => setSelected(config)}>{config.filename}</button>
-            <span className="muted small">
-              {formatDate(config.created_at)} · {formatBytes(config.size_bytes)}
-            </span>
-            {config.sha256 && (
-              <code className="sha" title={`sha256 ${config.sha256}`}>{config.sha256.slice(0, 8)}</code>
-            )}
-            {canDelete && (
-              <button className="ghost small" title="remover" onClick={() => onDelete(config.id)}>×</button>
-            )}
-          </li>
-        ))}
+        {configs.map((config, index) => {
+          const previous = configs[index + 1]
+          const changed = index === 0 && previous && config.sha256 && config.sha256 !== previous.sha256
+          return (
+            <li key={config.id} className={config.id === selected?.id ? 'active' : ''}>
+              <button className="link" onClick={() => setSelected(config)}>{config.filename}</button>
+              <span className="muted small">
+                {formatDate(config.created_at)} · {formatBytes(config.size_bytes)}
+              </span>
+              {config.sha256 && (
+                <code className="sha" title={`sha256 ${config.sha256}`}>{config.sha256.slice(0, 8)}</code>
+              )}
+              {changed && <span className="badge tiny warn" title="difere da configuração anterior">alterada</span>}
+              {onRename && (
+                <button
+                  className="ghost small"
+                  title="renomear"
+                  onClick={() => {
+                    const next = window.prompt('novo nome do arquivo', config.filename)
+                    if (next && next.trim()) onRename(config.id, next.trim())
+                  }}
+                >
+                  ✎
+                </button>
+              )}
+              {canDelete && (
+                <button className="ghost small" title="remover" onClick={() => onDelete(config.id)}>×</button>
+              )}
+            </li>
+          )
+        })}
       </ul>
 
       {selected && (

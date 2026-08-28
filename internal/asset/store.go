@@ -55,6 +55,12 @@ var (
 	qFavoriteList       = q("favorite_list.sql")
 	qFavoriteAdd        = q("favorite_add.sql")
 	qFavoriteRemove     = q("favorite_remove.sql")
+	qAttachRename       = q("attachment_rename.sql")
+	qAttachSetSort      = q("attachment_set_sort.sql")
+	qAuditInsert        = q("audit_insert.sql")
+	qAuditList          = q("audit_list.sql")
+	qFindByNameParent   = q("find_by_name_parent.sql")
+	qFindByName         = q("find_by_name.sql")
 )
 
 type Store struct {
@@ -67,7 +73,7 @@ func scanAsset(row pgx.CollectableRow) (Asset, error) {
 	var a Asset
 	err := row.Scan(
 		&a.ID, &a.ParentID, &a.Name, &a.Kind, &a.Description, &a.MgmtIP,
-		&a.Attrs, &a.Status, &a.StatusAt, &a.PosX, &a.PosY, &a.CreatedAt, &a.UpdatedAt,
+		&a.Attrs, &a.Status, &a.StatusAt, &a.PosX, &a.PosY, &a.CoverAttachmentID, &a.CreatedAt, &a.UpdatedAt,
 		&a.Suppressed, &a.ChildCount, &a.Depth,
 	)
 	if a.Attrs == nil {
@@ -168,6 +174,8 @@ func (s *Store) Update(ctx context.Context, id uuid.UUID, in UpdateInput) error 
 		in.Has("attrs"), jsonOrNil(in.Attrs),
 		in.Has("pos_x"), in.PosX,
 		in.Has("pos_y"), in.PosY,
+		in.Has("cover_attachment_id"), in.CoverAttachmentID,
+		in.Has("status"), in.Status,
 	).Scan(&out)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apperr.NotFound("asset_not_found", "ativo nao encontrado")
@@ -276,7 +284,7 @@ func (s *Store) SetGPS(ctx context.Context, id uuid.UUID, lat, lon float64) erro
 func scanAttachment(row pgx.CollectableRow) (Attachment, error) {
 	var a Attachment
 	err := row.Scan(&a.ID, &a.AssetID, &a.Kind, &a.ObjectKey, &a.ThumbKey, &a.Filename,
-		&a.MimeType, &a.SizeBytes, &a.SHA256, &a.CapturedAt, &a.CreatedAt)
+		&a.MimeType, &a.SizeBytes, &a.SHA256, &a.SortOrder, &a.CapturedAt, &a.CreatedAt)
 	return a, err
 }
 
@@ -404,6 +412,158 @@ func (s *Store) AttachmentKeys(ctx context.Context, assetID uuid.UUID) ([]string
 		}
 	}
 	return keys, rows.Err()
+}
+
+// Pool expoe o pool para operacoes que precisam de transacao explicita (o
+// commit do import CSV: ou entra tudo, ou nada).
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+func (s *Store) RenameAttachment(ctx context.Context, id uuid.UUID, filename string) error {
+	var out uuid.UUID
+	err := s.pool.QueryRow(ctx, qAttachRename, id, filename).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apperr.NotFound("attachment_not_found", "anexo nao encontrado")
+	}
+	if err != nil {
+		return apperr.Internal(err, "renomeando anexo")
+	}
+	return nil
+}
+
+// SetAttachmentSort grava a ordem final de uma lista de anexos, todos do
+// mesmo ativo (o filtro por asset_id evita que um id de outro ativo, por
+// engano ou má-fe, mude ordem que nao e dele).
+func (s *Store) SetAttachmentSort(ctx context.Context, assetID uuid.UUID, ids []uuid.UUID) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	positions := make([]int32, len(ids))
+	for i := range ids {
+		positions[i] = int32(i)
+	}
+	rows, err := s.pool.Query(ctx, qAttachSetSort, ids, positions, assetID)
+	if err != nil {
+		return 0, apperr.Internal(err, "gravando ordem de anexos")
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	return n, rows.Err()
+}
+
+func (s *Store) InsertAudit(ctx context.Context, e AuditEntry) error {
+	if _, err := s.pool.Exec(ctx, qAuditInsert, e.AssetID, e.AssetName, e.UserID, e.UserEmail, e.Action, jsonOrNil(e.Changes)); err != nil {
+		return apperr.Internal(err, "gravando auditoria")
+	}
+	return nil
+}
+
+func (s *Store) ListAudit(ctx context.Context, assetID uuid.UUID, limit int) ([]AuditEntry, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, qAuditList, assetID, limit)
+	if err != nil {
+		return nil, apperr.Internal(err, "listando auditoria")
+	}
+	defer rows.Close()
+	list := make([]AuditEntry, 0, 16)
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.AssetID, &e.AssetName, &e.UserID, &e.UserEmail, &e.Action, &e.Changes, &e.CreatedAt); err != nil {
+			return nil, apperr.Internal(err, "lendo auditoria")
+		}
+		if e.Changes == nil {
+			e.Changes = map[string]any{}
+		}
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}
+
+// FindIDByNameUnderParent resolve duplicata/pai por nome dentro de um escopo
+// conhecido (raiz quando parentID e nil). ok=false quando nao ha match.
+func (s *Store) FindIDByNameUnderParent(ctx context.Context, name string, parentID *uuid.UUID) (uuid.UUID, bool, error) {
+	rows, err := s.pool.Query(ctx, qFindByNameParent, name, parentID)
+	if err != nil {
+		return uuid.Nil, false, apperr.Internal(err, "procurando ativo por nome")
+	}
+	defer rows.Close()
+	var id uuid.UUID
+	found := false
+	for rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			return uuid.Nil, false, apperr.Internal(err, "lendo ativo por nome")
+		}
+		found = true
+	}
+	return id, found, rows.Err()
+}
+
+// FindIDByNameUnderParentTx e a mesma busca de FindIDByNameUnderParent, mas
+// dentro de uma transacao em andamento — precisa enxergar linhas ja inseridas
+// neste mesmo commit de import, que ainda nao existem fora da transacao.
+func (s *Store) FindIDByNameUnderParentTx(ctx context.Context, tx pgx.Tx, name string, parentID *uuid.UUID) (uuid.UUID, bool, error) {
+	rows, err := tx.Query(ctx, qFindByNameParent, name, parentID)
+	if err != nil {
+		return uuid.Nil, false, apperr.Internal(err, "procurando ativo por nome")
+	}
+	defer rows.Close()
+	var id uuid.UUID
+	found := false
+	for rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			return uuid.Nil, false, apperr.Internal(err, "lendo ativo por nome")
+		}
+		found = true
+	}
+	return id, found, rows.Err()
+}
+
+// FindByNameAnywhere resolve pai de import por nome em toda a arvore.
+// Devolve erro de validacao (nao apperr.Internal) quando o nome e ambiguo,
+// porque quem decide o que fazer e o usuario, nao o sistema.
+func (s *Store) FindByNameAnywhere(ctx context.Context, name string) (id uuid.UUID, found bool, ambiguous bool, err error) {
+	rows, qErr := s.pool.Query(ctx, qFindByName, name)
+	if qErr != nil {
+		return uuid.Nil, false, false, apperr.Internal(qErr, "procurando pai por nome")
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var thisID uuid.UUID
+		var parentID *uuid.UUID
+		if scanErr := rows.Scan(&thisID, &parentID); scanErr != nil {
+			return uuid.Nil, false, false, apperr.Internal(scanErr, "lendo pai por nome")
+		}
+		ids = append(ids, thisID)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return uuid.Nil, false, false, apperr.Internal(rowsErr, "procurando pai por nome")
+	}
+	switch len(ids) {
+	case 0:
+		return uuid.Nil, false, false, nil
+	case 1:
+		return ids[0], true, false, nil
+	default:
+		return uuid.Nil, false, true, nil
+	}
+}
+
+// InsertTx cria um ativo dentro de uma transacao existente — usado so pelo
+// commit do import CSV, onde o lote inteiro precisa ser atomico.
+func (s *Store) InsertTx(ctx context.Context, tx pgx.Tx, in CreateInput) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, qInsert,
+		in.ParentID, in.Name, in.Kind, in.Description, in.MgmtIP, jsonOrNil(in.Attrs), in.PosX, in.PosY,
+	).Scan(&id)
+	if err != nil {
+		return uuid.Nil, translate(err, "criando ativo")
+	}
+	return id, nil
 }
 
 func jsonOrNil(m map[string]any) any {

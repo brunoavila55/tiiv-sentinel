@@ -10,9 +10,11 @@ import { StatusDot } from './StatusDot'
 export function CommandPalette({
   onClose,
   onSelect,
+  onCreateNew,
 }: {
   onClose: () => void
   onSelect: (id: string) => void
+  onCreateNew?: (name: string) => void
 }) {
   const [term, setTerm] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -46,7 +48,7 @@ export function CommandPalette({
         <input
           autoFocus
           value={term}
-          placeholder="nome, IP ou descricao…"
+          placeholder="nome, IP ou descrição…"
           onChange={(e) => setTerm(e.target.value)}
         />
         <ul>
@@ -64,7 +66,14 @@ export function CommandPalette({
             </li>
           ))}
           {term && !isFetching && results.length === 0 && (
-            <li className="muted">nada encontrado para “{term}”</li>
+            <li className="muted no-results">
+              nada encontrado para “{term}”
+              {onCreateNew && (
+                <button className="link small" onClick={() => onCreateNew(term)}>
+                  criar ativo chamado “{term}”
+                </button>
+              )}
+            </li>
           )}
         </ul>
         <footer className="muted small">

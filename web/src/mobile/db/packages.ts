@@ -90,7 +90,7 @@ export async function packagedDetail(assetId: string): Promise<AssetDetail | und
       .map((item) => item.asset)
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
 
-    return { asset: entry.asset, breadcrumb, children, attachments: entry.attachments }
+    return { asset: entry.asset, breadcrumb, children, attachments: entry.attachments, descendant_count: children.length }
   }, undefined)
 }
 

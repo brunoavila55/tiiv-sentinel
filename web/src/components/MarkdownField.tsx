@@ -42,7 +42,7 @@ export function MarkdownField({
 
   return (
     <div className="markdown-view">
-      {value ? <Markdown>{value}</Markdown> : <p className="muted">sem descricao</p>}
+      {value ? <Markdown>{value}</Markdown> : <p className="muted">sem descrição</p>}
       {canEdit && (
         <button className="ghost small" onClick={() => setEditing(true)}>editar</button>
       )}
