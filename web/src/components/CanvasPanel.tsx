@@ -40,7 +40,78 @@ function dagreLayout(assets: Asset[]): Map<string, { x: number; y: number }> {
   return out
 }
 
+const RADIAL_RING = 210
+
+/** Layout radial: raiz no centro, filhos em aneis concentricos ao redor. */
+function radialLayout(assets: Asset[], rootId: string | null): Map<string, { x: number; y: number }> {
+  const out = new Map<string, { x: number; y: number }>()
+  if (assets.length === 0) return out
+  const ids = new Set(assets.map((a) => a.id))
+
+  const byParent = new Map<string, Asset[]>()
+  assets.forEach((a) => {
+    if (a.parent_id && ids.has(a.parent_id)) {
+      const list = byParent.get(a.parent_id) ?? []
+      list.push(a)
+      byParent.set(a.parent_id, list)
+    }
+  })
+
+  const leafCache = new Map<string, number>()
+  function leafCount(id: string): number {
+    const cached = leafCache.get(id)
+    if (cached !== undefined) return cached
+    const children = byParent.get(id) ?? []
+    const count = children.length === 0 ? 1 : children.reduce((sum, c) => sum + leafCount(c.id), 0)
+    leafCache.set(id, count)
+    return count
+  }
+
+  function place(id: string, depth: number, angleStart: number, angleEnd: number) {
+    const angle = (angleStart + angleEnd) / 2
+    const radius = depth * RADIAL_RING
+    out.set(id, { x: radius * Math.cos(angle) - NODE_W / 2, y: radius * Math.sin(angle) - NODE_H / 2 })
+    const children = byParent.get(id) ?? []
+    if (children.length === 0) return
+    const total = children.reduce((sum, c) => sum + leafCount(c.id), 0)
+    let cursor = angleStart
+    for (const child of children) {
+      const span = ((angleEnd - angleStart) * leafCount(child.id)) / total
+      place(child.id, depth + 1, cursor, cursor + span)
+      cursor += span
+    }
+  }
+
+  const root = rootId ? assets.find((a) => a.id === rootId) : undefined
+  if (root) {
+    place(root.id, 0, 0, Math.PI * 2)
+    return out
+  }
+
+  // Sem raiz explicita (floresta): cada topo ganha uma fatia proporcional do circulo.
+  const roots = assets.filter((a) => !a.parent_id || !ids.has(a.parent_id))
+  const total = roots.reduce((sum, r) => sum + leafCount(r.id), 0) || 1
+  let cursor = 0
+  for (const r of roots) {
+    const span = (Math.PI * 2 * leafCount(r.id)) / total
+    place(r.id, 1, cursor, cursor + span)
+    cursor += span
+  }
+  return out
+}
+
 const HIDDEN_KINDS_KEY = 'sentinel.canvas.hiddenKinds'
+const LAYOUT_MODE_KEY = 'sentinel.canvas.layoutMode'
+type LayoutMode = 'tree' | 'radial'
+
+function loadLayoutMode(): LayoutMode {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_MODE_KEY)
+    return raw === 'radial' ? 'radial' : 'tree'
+  } catch {
+    return 'tree'
+  }
+}
 
 function loadHiddenKinds(): string[] {
   try {
@@ -84,10 +155,14 @@ function Canvas({
   const flow = useReactFlow()
   const [depth, setDepth] = useState(2)
   const [hidden, setHidden] = useState<string[]>(loadHiddenKinds)
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(loadLayoutMode)
 
   useEffect(() => {
     window.localStorage.setItem(HIDDEN_KINDS_KEY, JSON.stringify(hidden))
   }, [hidden])
+  useEffect(() => {
+    window.localStorage.setItem(LAYOUT_MODE_KEY, layoutMode)
+  }, [layoutMode])
   const [nodes, setNodes] = useState<Node<AssetNodeData>[]>([])
   const pending = useRef(new Map<string, { pos_x: number; pos_y: number }>())
   const timer = useRef<number | undefined>(undefined)
@@ -107,6 +182,17 @@ function Canvas({
   }, [items, rootId, depth, hidden])
 
   useEffect(() => {
+    if (layoutMode === 'radial') {
+      const layout = radialLayout(visible, rootId)
+      const next = visible.map<Node<AssetNodeData>>((asset) => ({
+        id: asset.id,
+        type: 'asset',
+        position: layout.get(asset.id) ?? { x: 0, y: 0 },
+        data: { asset, kind: kinds.find((k) => k.id === asset.kind), selected: asset.id === selectedId },
+      }))
+      setNodes(next)
+      return
+    }
     const layout = dagreLayout(visible)
     const missing: { id: string; pos_x: number; pos_y: number }[] = []
     const next = visible.map<Node<AssetNodeData>>((asset) => {
@@ -123,7 +209,7 @@ function Canvas({
     setNodes(next)
     // A primeira renderizacao grava a posicao vinda do layout automatico.
     if (canPersist && missing.length > 0) void api.savePositions(missing).catch(() => undefined)
-  }, [visible, kinds, selectedId, canPersist])
+  }, [visible, kinds, selectedId, canPersist, layoutMode, rootId])
 
   const edges = useMemo<Edge[]>(() => {
     const ids = new Set(visible.map((a) => a.id))
@@ -133,9 +219,9 @@ function Canvas({
         id: `${a.parent_id}-${a.id}`,
         source: a.parent_id as string,
         target: a.id,
-        type: 'smoothstep',
+        type: layoutMode === 'radial' ? 'straight' : 'smoothstep',
       }))
-  }, [visible])
+  }, [visible, layoutMode])
 
   // Fit-to-view enquadra o subtree em foco, nao a rede inteira.
   useEffect(() => {
@@ -175,6 +261,20 @@ function Canvas({
     <section className="panel canvas-panel">
       {totalAssets > 0 && (
         <div className="canvas-toolbar">
+          <div className="layout-toggle">
+            <button
+              className={`chip ${layoutMode === 'tree' ? 'active' : ''}`}
+              onClick={() => setLayoutMode('tree')}
+            >
+              árvore
+            </button>
+            <button
+              className={`chip ${layoutMode === 'radial' ? 'active' : ''}`}
+              onClick={() => setLayoutMode('radial')}
+            >
+              circular
+            </button>
+          </div>
           <label className="depth">
             profundidade
             <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} />
@@ -218,7 +318,7 @@ function Canvas({
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onNodeClick={(_, node) => onSelect(node.id)}
-            nodesDraggable={canPersist}
+            nodesDraggable={canPersist && layoutMode === 'tree'}
             nodesConnectable={false}
             edgesFocusable={false}
             minZoom={0.1}

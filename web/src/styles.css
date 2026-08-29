@@ -287,6 +287,8 @@ kbd {
 }
 .chip:hover:not(:disabled) { filter: none; border-color: var(--muted-2); }
 .chip.off { opacity: .35; text-decoration: line-through; }
+.chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.layout-toggle { display: flex; gap: 6px; }
 .canvas-body { flex: 1; min-height: 0; }
 .canvas-body .react-flow__attribution { display: none; }
 .canvas-body .react-flow__background { opacity: .5; }
