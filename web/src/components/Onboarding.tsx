@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useCreateAsset } from '../api/hooks'
+import { Logo } from './Logo'
 
 /**
  * Banco vazio e um beco sem saida se a tela pedir "selecione um ativo" tres
@@ -33,6 +34,7 @@ export function Onboarding({
   return (
     <div className="onboarding">
       <div className="onboarding-card">
+        <Logo size={44} />
         <h1>tiiv <span>sentinel</span></h1>
         <p className="muted">
           Documentação e acesso a ativos de rede com topologia hierárquica visual.

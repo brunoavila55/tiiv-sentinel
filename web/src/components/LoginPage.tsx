@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, ApiError } from '../api/client'
+import { Logo } from './Logo'
 
 export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   const [email, setEmail] = useState('')
@@ -24,6 +25,7 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="login">
       <form className="login-card" onSubmit={submit}>
+        <Logo size={40} />
         <h1>tiiv <span>sentinel</span></h1>
         <p className="muted">Documentação e acesso aos ativos de rede.</p>
         <label>
